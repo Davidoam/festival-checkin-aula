@@ -1,137 +1,82 @@
-service: festival-check-in
-frameworkVersion: "3.40.0"
-
 provider:
-  name: aws
-  runtime: nodejs22.x
-  region: ${env:AWS_REGION}
-  stage: ${env:FCI_EQUIPO}
-  iam:
-    role: ${env:LAMBDA_ROLE_ARN}
   environment:
-    FCI_TABLA_EVENTOS:
-      Ref: FestivalCheckInEventos
-    FCI_TABLA_INSCRIPCIONES:
-      Ref: FestivalCheckInInscripciones
-    FCI_TABLA_USUARIOS:
-      Ref: FestivalCheckInUsuarios
-  httpApi:
-    payload: '2.0'
-    cors:
-      allowedOrigins:
-        - https://albertohdezakkari.github.io
-      allowedHeaders:
-        - Content-Type
-      allowedMethods:
-        - GET
-        - POST
-
-package:
-  patterns:
-    - "!scripts/**"
-    - "!README.md"
-    - "!.env*"
-
-functions:
-  crearEvento:
-    name: ${self:service}-${self:provider.stage}-crearEvento
-    handler: src/eventos/crear-evento/handler.handler
-    events:
-      - httpApi:
-          method: POST
-          path: /events
-  buscarEvento:
-    name: ${self:service}-${self:provider.stage}-buscarEvento
-    handler: src/eventos/buscar-evento/handler.buscarEventoHandler
-    events:
-      - httpApi:
-          method: GET
-          path: /events/{eventId}
-  listarEventos:
-    name: ${self:service}-${self:provider.stage}-listarEventos
-    handler: src/eventos/listar-eventos/handler.listarEventosHandler
-    events:
-      - httpApi:
-          method: GET
-          path: /events
-  crearUsuario:
-    name: ${self:service}-${self:provider.stage}-crearUsuario
-    handler: src/usuarios/crear-usuario/handler.handler
-    events:
-      - httpApi:
-          method: POST
-          path: /users
-  consultarInscripcion:
-    handler: src/inscripciones/consultar-inscripcion/handler.handler
-    events:
-      - httpApi:
-          method: GET
-          path: /events/{eventId}/registrations/{userId}
-  inscribirUsuario:
-    handler: src/inscripciones/inscribir-usuario/handler.handler
-    events:
-      - httpApi:
-          method: POST
-          path: /events/{eventId}/registrations
-      - httpApi:
-          method: POST
-          path: /events/{eventId}/registrations/{userId}
-
+    TABLA_HOTELES: { Ref: TablaHoteles }
+    TABLA_RESERVAS: { Ref: TablaReservas }
+ 
 resources:
   Resources:
-    FestivalCheckInEventos:
+    TablaHoteles:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: FCI_EVENTOS_${self:provider.stage}
+        TableName: HOTELES
+        # PARTITION KEY: HOTEL_ID (N: número).
+        # CAMPOS NO CLAVE de esta tabla (fuera de su PK):
+        #   NOMBRE (S: texto).
+        # Sus tipos se describen en MODELO_HOTEL.
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: EVENT_ID
-            AttributeType: N
+          - { AttributeName: HOTEL_ID, AttributeType: N }
         KeySchema:
-          - AttributeName: EVENT_ID
-            KeyType: HASH
-    FestivalCheckInInscripciones:
+          - AttributeName: HOTEL_ID
+            KeyType: HASH  # Partition key del lado 1.
+ 
+    TablaReservas:
       Type: AWS::DynamoDB::Table
       Properties:
-        TableName: FCI_INSCRIPCIONES_${self:provider.stage}
+        TableName: RESERVAS
+        # PARTITION KEY: RESERVA_ID (N: número).
+        # CAMPOS NO CLAVE de esta tabla (fuera de su PK):
+        #   NOMBRE (S: texto).
+        #   NOCHES (N: número).
+        #   HOTEL_ID (N: referencia y clave del GSI).
+        # Sus tipos se describen en MODELO_RESERVA.
         BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: EVENT_ID
-            AttributeType: N
-          - AttributeName: USER_ID
-            AttributeType: S
+        AttributeDefinitions:  # N = número. Declara las claves.
+          - { AttributeName: RESERVA_ID, AttributeType: N }
+          - { AttributeName: HOTEL_ID, AttributeType: N }
         KeySchema:
-          - AttributeName: EVENT_ID
-            KeyType: HASH
-          - AttributeName: USER_ID
-            KeyType: RANGE
+          - AttributeName: RESERVA_ID
+            KeyType: HASH  # Partition key del lado N.
+ 
+        # GSI: segunda forma de buscar en RESERVAS.
+        # Global: agrupa todo el lado N por su referencia.
         GlobalSecondaryIndexes:
-          - IndexName: PorUsuario
+          - IndexName: PorHotel
+            # Clave compuesta = partition key + sort key:
+            # (HOTEL_ID, RESERVA_ID), los dos valores juntos.
             KeySchema:
-              - AttributeName: USER_ID
-                KeyType: HASH
-              - AttributeName: EVENT_ID
-                KeyType: RANGE
+              - AttributeName: HOTEL_ID
+                KeyType: HASH   # Partition key. Agrupa por Hotel.
+              - AttributeName: RESERVA_ID
+                KeyType: RANGE  # Sort key. Ordena por ID.
             Projection:
-              ProjectionType: KEYS_ONLY
-    FestivalCheckInUsuarios:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: FCI_USUARIOS_${self:provider.stage}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: USER_ID
-            AttributeType: S
-        KeySchema:
-          - AttributeName: USER_ID
-            KeyType: HASH
-  Outputs:
-    NombreTablaEventosFCI:
-      Value:
-        Ref: FestivalCheckInEventos
-    NombreTablaInscripcionesFCI:
-      Value:
-        Ref: FestivalCheckInInscripciones
-    NombreTablaUsuariosFCI:
-      Value:
-        Ref: FestivalCheckInUsuarios
+              ProjectionType: INCLUDE  # Claves + campos de abajo.
+              NonKeyAttributes:        # Campos de RESERVAS copiados al índice.
+                - NOMBRE
+                - NOCHES
+
+functions:
+  crearReserva:
+    handler: src/reservas/crear-listar/handler.crearHandler
+    events:
+      - httpApi: { method: POST, path: /reservas }
+  listarReservas:
+    handler: src/reservas/crear-listar/handler.listarHandler
+    events:
+      - httpApi: { method: GET, path: /reservas }
+  eliminarReserva:
+    handler: src/reservas/eliminar/handler.handler
+    events:
+      - httpApi: { method: DELETE, path: /reservas/{reservaId} }
+  modificarNoches:
+    handler: src/reservas/modificar-noches/handler.handler
+    events:
+      - httpApi: { method: PATCH, path: /reservas/{reservaId} }
+  trasladarReserva:
+    handler: src/reservas/trasladar/handler.handler
+    events:
+      - httpApi: { method: PATCH, path: /reservas/{reservaId}/hotel }
+  consultarHotel:
+    handler: src/hoteles/consultar/handler.handler
+    events:
+      - httpApi: { method: GET, path: /hoteles/{hotelId}/reservas }
